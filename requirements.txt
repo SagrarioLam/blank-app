@@ -2,7 +2,6 @@ streamlit
 pandas
 numpy
 datetime
-datetime, timedelta
 requests
 time
 sklearn.preprocessing
