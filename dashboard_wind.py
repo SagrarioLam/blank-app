@@ -1,152 +1,143 @@
-# dashboard_wind.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import requests
-import time
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
 import plotly.express as px
-import os
+import datetime
+import requests # ¡Importante! Asegúrate de tenerlo
 
-# ----------------------------
-# CONFIGURACIÓN
-# ----------------------------
-LAT, LON = 22.400, -97.920
-API_KEY = "PNRL9UYWRR623NMV7AJHQE5CS"  # reemplaza con tu API key
-CSV_FILE = "wind_history.csv"
-WINDOW_SIZE = 24       # Últimas 24 horas para LSTM
-REFRESH_INTERVAL = 3600  # segundos
+# --- Configuración de la Página ---
+st.set_page_config(page_title="Historial de Viento", layout="wide")
 
-# ----------------------------
-# FUNCIONES AUXILIARES
-# ----------------------------
-def deg_to_cardinal(deg):
-    dirs = ['N','NE','E','SE','S','SW','W','NW']
-    return dirs[int((deg+22.5)/45)%8]
+# --- 1. Función Real para Llamar a la API ---
 
-def download_vc_history(lat, lon, start, end, api_key):
-    all_records = []
-    current_start = start
-    while current_start <= end:
-        current_end = min(current_start + timedelta(days=30), end)
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/{current_start.date()}/{current_end.date()}"
-        params = {
-            "unitGroup": "metric",
-            "include": "hours",
-            "key": api_key,
-            "contentType": "json"
-        }
+def get_wind_data_real(location, start_date, end_date, api_key):
+    """
+    Obtiene datos reales de la API de Visual Crossing.
+    """
+    # Convertir fechas a string en formato YYYY-MM-DD
+    start_str = start_date.strftime('%Y-%m-%d')
+    end_str = end_date.strftime('%Y-%m-%d')
+    
+    # Construye la URL de la API (ajusta 'elements' si necesitas más datos)
+    url = (f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
+           f"{location}/{start_str}/{end_str}?unitGroup=metric&key={api_key}"
+           f"&include=days&elements=datetime,windspeed,winddir")
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status() # Lanza un error si la respuesta no es 200
+        
+        data = response.json()
+        
+        # --- Procesamiento del JSON ---
+        # La estructura de datos depende de la API. Basado en la URL,
+        # esperamos una clave 'days'.
+        
+        days_data = data.get('days', [])
+        
+        if not days_data:
+            st.warning("La API no devolvió datos para esta ubicación o rango.")
+            return pd.DataFrame()
+
+        # Convertimos la lista de días en un DataFrame
+        df = pd.DataFrame(days_data)
+        
+        # Aseguramos que la columna 'datetime' sea de tipo fecha
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        
+        # Renombramos columnas para que coincidan con los gráficos (si es necesario)
+        # Ajusta esto a los nombres reales que devuelve la API
+        df = df.rename(columns={
+            'windspeed': 'wind_speed_kmh',
+            'winddir': 'wind_direction_deg'
+        })
+        
+        # Seleccionamos solo las columnas que nos interesan
+        columns_of_interest = ['datetime', 'wind_speed_kmh', 'wind_direction_deg']
+        df = df[columns_of_interest]
+        
+        return df
+        
+    except requests.exceptions.HTTPError as err:
+        st.error(f"Error de API: {err.response.text}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Ocurrió un error inesperado: {e}")
+        return pd.DataFrame()
+
+# --- 2. Interfaz de Usuario (UI) con Streamlit ---
+
+st.title("🌬️ Visor de Historial de Viento")
+st.markdown("Esta aplicación obtiene datos históricos de [Visual Crossing](https://www.visualcrossing.com/).")
+
+# Usamos la barra lateral para los controles
+with st.sidebar:
+    st.header("Configuración")
+    
+    location = st.text_input("Ubicación", "Bogota, Colombia")
+    
+    # Campos para seleccionar fechas
+    today = datetime.date.today()
+    one_week_ago = today - datetime.timedelta(days=7)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Fecha de Inicio", one_week_ago)
+    with col2:
+        end_date = st.date_input("Fecha de Fin", today)
+        
+    # Botón para ejecutar
+    fetch_button = st.button("Obtener Datos")
+
+# --- 3. Lógica Principal (Qué pasa al presionar el botón) ---
+
+if fetch_button:
+    # Validaciones
+    if not location:
+        st.warning("Por favor, introduce una ubicación.")
+    elif start_date > end_date:
+        st.error("Error: La fecha de inicio no puede ser posterior a la fecha de fin.")
+    else:
+        # --- Obtener la API Key desde Streamlit Secrets ---
+        # (Ver el paso 3 de esta guía)
         try:
-            r = requests.get(url, params=params, timeout=10)
-            r.raise_for_status()
-            data = r.json()
-            for day in data.get("days", []):
-                day_date = day.get("datetime")
-                for hour in day.get("hours", []):
-                    hour_time = hour.get("datetime")
-                    try:
-                        ts = datetime.fromisoformat(f"{day_date}T{hour_time}")
-                    except Exception:
-                        continue
-                    speed = hour.get("windspeed")
-                    deg = hour.get("winddir")
-                    if speed is not None and deg is not None:
-                        all_records.append([ts, speed, deg])
-        except Exception as e:
-            st.warning(f"Error descargando datos: {e}")
-        current_start = current_end + timedelta(days=1)
-        time.sleep(1)
-    return pd.DataFrame(all_records, columns=["time","speed","deg"])
+            api_key = st.secrets["VISUAL_CROSSING_KEY"]
+        except (KeyError, FileNotFoundError):
+            st.error("Error de configuración: No se encontró la API Key. (El desarrollador debe configurarla en st.secrets).")
+            api_key = None # Detiene la ejecución
 
-# ----------------------------
-# INTERFAZ STREAMLIT
-# ----------------------------
-st.title("🌬️ Dashboard de Viento en Tiempo Real")
-
-# ----------------------------
-# CARGAR HISTÓRICO
-# ----------------------------
-if st.button("Actualizar datos desde Visual Crossing"):
-    st.info("Descargando datos nuevos...")
-    if os.path.exists(CSV_FILE):
-        df = pd.read_csv(CSV_FILE, parse_dates=["time"])
-        last_date = df["time"].max()
-        start_date = last_date + timedelta(hours=1)
-    else:
-        df = pd.DataFrame(columns=["time","speed","deg"])
-        start_date = datetime(2025,1,1)
-
-    end_date = datetime.now()
-    if start_date <= end_date:
-        new_data = download_vc_history(LAT, LON, start_date, end_date, API_KEY)
-        if not new_data.empty:
-            df = pd.concat([df, new_data], ignore_index=True)
-            df["cardinal"] = df["deg"].apply(deg_to_cardinal)
-            df.to_csv(CSV_FILE, index=False)
-            st.success(f"✅ Histórico actualizado. Registros totales: {len(df)}")
-        else:
-            st.warning("⚠️ No se obtuvieron nuevos datos.")
+        if api_key:
+            # Todo está bien, llamamos a la función REAL
+            with st.spinner(f"Obteniendo datos para '{location}'..."):
+                data_df = get_wind_data_real(location, start_date, end_date, api_key)
+            
+            # --- 4. Mostrar Resultados (si se obtuvieron datos) ---
+            if not data_df.empty:
+                st.success("¡Datos cargados con éxito!")
+                
+                st.subheader(f"Datos de Viento para {location}")
+                st.dataframe(data_df)
+                
+                # --- 5. Visualización con Plotly ---
+                st.subheader("Gráficos")
+                
+                # Gráfico de Línea: Velocidad del Viento
+                fig_speed = px.line(data_df, 
+                                    x='datetime', 
+                                    y='wind_speed_kmh', 
+                                    title="Velocidad del Viento",
+                                    labels={"datetime": "Fecha", "wind_speed_kmh": "Velocidad (km/h)"})
+                st.plotly_chart(fig_speed, use_container_width=True)
+                
+                # Gráfico de Dispersión: Dirección vs Velocidad
+                fig_dir = px.scatter(data_df, 
+                                     x='datetime', 
+                                     y='wind_direction_deg', 
+                                     color='wind_speed_kmh',
+                                     title="Dirección y Velocidad del Viento",
+                                     labels={"datetime": "Fecha", "wind_direction_deg": "Dirección (°)", "wind_speed_kmh": "Velocidad (km/h)"})
+                st.plotly_chart(fig_dir, use_container_width=True)
+            else:
+                # El error ya se mostró dentro de la función get_wind_data_real
+                st.info("No se encontraron datos para los parámetros seleccionados.")
 else:
-    if os.path.exists(CSV_FILE):
-        df = pd.read_csv(CSV_FILE, parse_dates=["time"])
-        df["cardinal"] = df["deg"].apply(deg_to_cardinal)
-    else:
-        st.warning("No hay datos históricos disponibles.")
-        st.stop()
-
-# ----------------------------
-# MOSTRAR TABLA Y GRÁFICOS
-# ----------------------------
-st.subheader("Últimos registros")
-st.dataframe(df.tail(10))
-
-st.subheader("Velocidad del viento (m/s)")
-fig_speed = px.line(df, x="time", y="speed", title="Velocidad del viento")
-st.plotly_chart(fig_speed)
-
-st.subheader("Dirección del viento (grados)")
-fig_deg = px.line(df, x="time", y="deg", title="Dirección en grados")
-st.plotly_chart(fig_deg)
-
-st.subheader("Dirección cardinal")
-fig_card = px.histogram(df, x="cardinal", title="Distribución de dirección cardinal")
-st.plotly_chart(fig_card)
-
-# ----------------------------
-# PREDICCIÓN LSTM
-# ----------------------------
-if len(df) >= WINDOW_SIZE:
-    data_values = df[["speed","deg"]].values
-    scaler = MinMaxScaler()
-    data_scaled = scaler.fit_transform(data_values)
-
-    X = np.array([data_scaled[i-WINDOW_SIZE:i] for i in range(WINDOW_SIZE, len(data_scaled))])
-    y = np.array([data_scaled[i] for i in range(WINDOW_SIZE, len(data_scaled))])
-
-    model = Sequential([
-        LSTM(64, input_shape=(WINDOW_SIZE,2), activation='tanh'),
-        Dense(32, activation='relu'),
-        Dense(2)
-    ])
-    model.compile(optimizer='adam', loss='mse')
-    model.fit(X, y, epochs=10, batch_size=32, verbose=0)
-
-    last_window = data_scaled[-WINDOW_SIZE:].reshape(1,WINDOW_SIZE,2)
-    pred_scaled = model.predict(last_window)[0]
-    pred_speed, pred_deg = scaler.inverse_transform([pred_scaled])[0]
-    pred_dir = deg_to_cardinal(pred_deg)
-
-    st.subheader("Predicción LSTM")
-    st.metric("Velocidad pronosticada", f"{pred_speed:.2f} m/s")
-    st.metric("Dirección pronosticada", f"{pred_deg:.0f}° ({pred_dir})")
-else:
-    st.info("No hay suficientes datos para la predicción LSTM.")
-
-# ----------------------------
-# REFRESCO AUTOMÁTICO
-# ----------------------------
-from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=REFRESH_INTERVAL*1000, key="auto_refresh")
+    st.info("Configura los parámetros en la barra lateral y presiona 'Obtener Datos'.")
