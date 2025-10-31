@@ -1,14 +1,7 @@
 streamlit
 pandas
 numpy
-datetime
 requests
-time
-sklearn.preprocessing
-MinMaxScaler
-tensorflow.keras.models
-Sequential
-tensorflow.keras.layers
- LSTM, Dense
-plotly.express
-os
+tensorflow
+scikit-learn
+plotly
