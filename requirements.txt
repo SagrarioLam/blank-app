@@ -1,7 +1,4 @@
 streamlit
 pandas
-numpy
 requests
-tensorflow
-scikit-learn
 plotly
