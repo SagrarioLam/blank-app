@@ -1,1 +1,15 @@
 streamlit
+pandas
+numpy
+datetime
+datetime, timedelta
+requests
+time
+sklearn.preprocessing
+MinMaxScaler
+tensorflow.keras.models
+Sequential
+tensorflow.keras.layers
+ LSTM, Dense
+plotly.express
+os
