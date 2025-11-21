@@ -57,9 +57,6 @@ def obtener_datos_nasa(lat, lon, start_date, end_date, variables):
         "format": "JSON"
     }
     
-    # Construcción de la URL de solicitud
-    url_final = f"{NASA_POWER_URL}?{pd.io.json.build_url_query(params)}"
-    
     try:
         # Requests.get toma la URL base y el diccionario 'params'
         # y construye la URL final de manera correcta y automática.
