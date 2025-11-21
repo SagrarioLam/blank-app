@@ -22,6 +22,7 @@ with st.form("nasa_power_form"):
     # Variables a solicitar
     variables_disp = {
         "Velocidad del Viento a 10m (WS10M)": "WS10M",
+        "Dirección del Viento a 10m (WD10M)": "WD10M",
         "Temperatura a 2m (T2M)": "T2M",
         "Humedad Relativa a 2m (RH2M)": "RH2M",
         "Precipitación Total (PRECTOTCORR)": "PRECTOTCORR"
